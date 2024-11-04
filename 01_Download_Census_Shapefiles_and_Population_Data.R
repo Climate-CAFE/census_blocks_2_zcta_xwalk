@@ -100,6 +100,12 @@ decennial_year <- ifelse(year %in% 2000:2009, 2000,
                          ifelse(year %in% 2010:2019, 2010,
                                 ifelse(year %in% 2020:2029, 2020, NA)))
 
+# Total population variable will vary by Decennial Census
+#
+pop_var_name <- ifelse(year %in% 1990:2009, "PL001001",
+                       ifelse(year %in% 2010:2019, "P001001",
+                              ifelse(year %in% 2020:2029, "P1_001N", NA)))
+
 for (i in 1:length(states)) {
   
   cat("----------------------------------------------------------------------\n")
@@ -108,7 +114,6 @@ for (i in 1:length(states)) {
   counties <- tigris::counties(state = states[i], year = year, cb = TRUE)
   counties <- unique(counties[[grep("^COUNTYFP", names(counties), ignore.case = TRUE)]])
   
-  pop_var_name <- "P1_001N"
   geography <- "block"
   
   blockpop <- get_decennial(geography = geography,
@@ -121,4 +126,24 @@ for (i in 1:length(states)) {
   
   saveRDS(blockpop, paste0(input_data_dir, "Census_", pop_var_name, "_", geography, "_", decennial_year, "_", states[i], ".Rds"))
 }
+
+# Syntax for ZCTA population query is slightly different for 2000 than blocks
+#
+# Total population variable will vary by Decennial Census
+#
+pop_var_name_zc <- ifelse(year %in% 1990:2009, "P001001",
+                          ifelse(year %in% 2010:2019, "P001001",
+                                 ifelse(year %in% 2020:2029, "P1_001N", NA)))
+
+# Finally, download national ZCTA population counts for comparison in the final
+# step (script 03)
+#
+geography <- "zcta"
+sf <- ifelse(decennial_year == 2020, "dhc", "sf1")
+zctapop <- get_decennial(geography = geography,
+                         variables = pop_var_name_zc, # Use load_variables("pl", year = 2020) to see available vars
+                         year = decennial_year,
+                         sumfile = sf,
+                         key = Sys.getenv("CENSUS_API_KEY"))
+saveRDS(zctapop, paste0(input_data_dir, "Census_", pop_var_name, "_", geography, "_", decennial_year, "_US", ".Rds"))
 
