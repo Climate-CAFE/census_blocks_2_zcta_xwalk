@@ -121,58 +121,26 @@ if (!isTRUE(all.equal(st_crs(blocks), st_crs(zctas)))) {
 blocks <- st_make_valid(blocks) 
 zctas <- st_make_valid(zctas)
 
-#
-# %%%%%%%%%% STEP 2. CONVERT BLOCKS TO POINTS AND INTERSECT WITH ZCTAS %%%%%%% #
-#
-block_centroids <- st_point_on_surface(blocks)
-block_zctas <- st_intersection(block_centroids, zctas)
 
-block_geoid <- names(block_centroids)[grep("^GEOID", names(block_centroids))]
-block_pop_var <- names(block_centroids)[grep("^POP", names(block_centroids))]
-block_housing_var <- names(block_centroids)[grep("^HOUSING", names(block_centroids))]
-land_area_var <- names(block_centroids)[grep("^ALAND", names(block_centroids))]
-zcta_geoid <- names(block_zctas)[grep("^ZCTA5", names(block_zctas))]
-
-# Automated QC check -- confirm all block centroids have been linked to a ZCTA (if available)
-# NOTE: not every block will necessarily have an accompanying ZCTA -- ZCTA's have large 
-#       gaps in places where there is no mail delivery, such as nature preserves.
-#       Here, we're checking to ensure that the only unassigned blocks are those
-#       that: (1) are all-water tracts, (2) have population <= 10, and/or (3) have
-#       5 or fewer housing units. These are all indicators of blocks that we would
-#       not expect to have an accompanying ZCTA. 
-#
-unassigned_blocks <- block_centroids[which(!block_centroids[[block_geoid]] %in% block_zctas[[block_geoid]]),]
-populated <- which(unassigned_blocks[[block_pop_var]] > 10 & 
-                     unassigned_blocks[[land_area_var]] > 0 &
-                     unassigned_blocks[[block_housing_var]] > 5)
-if (dim(block_zctas)[1] != dim(block_centroids)[1] & length(populated) > 10) {
-  
-  cat("ERROR:", length(populated), "populated blocks do not have ZCTA assignments. Details below: \n") 
-  print(as.data.frame(unassigned_blocks[populated,c(block_geoid, land_area_var, block_pop_var, block_housing_var)]))
-  
-} else if (dim(block_zctas)[1] != dim(block_centroids)[1] & length(populated) > 0) {
-  
-  cat("WARNING:", length(populated), "populated blocks do not have ZCTA assignments. Details below: \n") 
-  print(as.data.frame(unassigned_blocks[populated,c(block_geoid, land_area_var, block_pop_var, block_housing_var)]))
-  
-} else { cat(":) all populated blocks have been linked to a ZCTA \n") }
-
-# Remove the extraneous columns; we only need block GEOID, ZCTA GEOID, and population (if available)
-# n.b., some census block shapefiles include populations but not others. The code
-# here assumes that the shapefile does not include population. The name of the GEOID
-# will change depending on the census year; confirm that block_geoid correctly
-# identifies it. Modify as needed. Both the blocks and ZCTA shapefiles may have
-# variables called GEOID; the block one will come first if intersection is done
-# with block first.
-#
-block_zctas <- block_zctas[,c(block_geoid, zcta_geoid)]
-
-# %%%%%%%%%%%%%%%%% STEP 3. READ IN & MERGE POPULATION COUNTS %%%%%%%%%%%%%%% #
+# %%%%%%%%%%%%%%%%% STEP 2. READ IN & MERGE POPULATION COUNTS %%%%%%%%%%%%%%% #
 # 
 # NOTE: if you didn't download your population data following script 01, then you
 #       will need to edit this to read in the correct filename of your population data
 #
-pop_var_name <- "P1_001N"
+# NOTE: 2010 block shapefiles do not include a population variable, so this was
+#       moved up in the processing to be available for characterizing any
+#       unassigned blocks. To be consistent across years and have a single
+#       population variable any POP column for 2020 is removed
+#
+if (year == 2020) {
+  blocks$POP20 <- NULL
+}
+
+# Total population variable will vary by Decennial Census
+#
+pop_var_name <- ifelse(year %in% 1990:2009, "PL001001",
+                       ifelse(year %in% 2010:2019, "P001001",
+                              ifelse(year %in% 2020:2029, "P1_001N", NA)))
 geography <- "block"
 decennial_year <- ifelse(year %in% 2000:2009, 2000,
                          ifelse(year %in% 2010:2019, 2010,
@@ -191,12 +159,12 @@ blockpop[,c("NAME", "variable")] <- NULL
 # Get the GEOID for the block shapefile and for the block populations file, which may 
 # change depending on the year of Census data
 #
-GEOID_shapefile <- names(block_zctas)[grep("^GEOID", names(block_zctas), ignore.case = TRUE)]
+GEOID_shapefile <- names(blocks)[grep("^GEOID|BLKIDFP", names(blocks), ignore.case = TRUE)]
 GEOID_popfile <- names(blockpop)[grep("^GEOID", names(blockpop), ignore.case = TRUE)]
 
 # Merge the population data with the blocks_zcta shapefile
 #
-block_zctas <- merge(block_zctas, blockpop, by.x = GEOID_shapefile, by.y = GEOID_popfile, all.x = TRUE)
+blocks <- merge(blocks, blockpop, by.x = GEOID_shapefile, by.y = GEOID_popfile, all.x = TRUE)
 num_missing <- length(which(is.na(blocks[[pop_var_name]])))
 
 if (num_missing > 0) {
@@ -204,9 +172,122 @@ if (num_missing > 0) {
 } else { cat(":) no blocks with missing population \n") }
 
 #
+# %%%%%%%%%% STEP 3. CONVERT BLOCKS TO POINTS AND INTERSECT WITH ZCTAS %%%%%%% #
+#
+# Extract relevant column names
+#
+block_geoid <- names(blocks)[grep("^GEOID|^BLKID", names(blocks))]
+block_pop_var <- names(blocks)[grep("^POP|^Pop", names(blocks))]
+land_area_var <- names(blocks)[grep("^ALAND", names(blocks))]
+zcta_geoid <- names(zctas)[grep("^ZCTA5", names(zctas))]
+
+block_centroids <- st_point_on_surface(blocks)
+block_zctas <- st_intersection(block_centroids, zctas[c(zcta_geoid)])
+
+#
+# %%%%%%%%%% STEP 4. ASSESS UNASSIGNED BLOCKS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
+#
+
+# Automated QC check -- confirm all block centroids have been linked to a ZCTA (if available)
+# NOTE: not every block will necessarily have an accompanying ZCTA -- ZCTA's have large 
+#       gaps in places where there is no mail delivery, such as nature preserves.
+#       Here, we're checking to ensure that the only unassigned blocks are those
+#       that: (1) are all-water tracts, (2) have population <= 10, and/or (3) have
+#       5 or fewer housing units. These are all indicators of blocks that we would
+#       not expect to have an accompanying ZCTA. 
+#
+unassigned_blocks <- block_centroids[which(!block_centroids[[block_geoid]] %in% block_zctas[[block_geoid]]),]
+populated <- which(unassigned_blocks[[block_pop_var]] > 10 & 
+                     unassigned_blocks[[land_area_var]] > 0)
+if (dim(block_zctas)[1] != dim(block_centroids)[1] & length(populated) > 10) {
+  
+  cat("ERROR:", length(populated), "populated blocks do not have ZCTA assignments. Details below: \n") 
+  print(as.data.frame(unassigned_blocks[populated,c(block_geoid, land_area_var, block_pop_var)]))
+  
+  
+  
+} else if (dim(block_zctas)[1] != dim(block_centroids)[1] & length(populated) > 0) {
+  
+  cat("WARNING:", length(populated), "populated blocks do not have ZCTA assignments. Details below: \n") 
+  print(as.data.frame(unassigned_blocks[populated,c(block_geoid, land_area_var, block_pop_var)]))
+  
+} else { cat(":) all populated blocks have been linked to a ZCTA \n") }
+
+# Note: Unassigned blocks also can arise in areas where the block geography does
+# not nest perfectly within the ZCTA. The Census should have all blocks within a
+# ZCTA, but for some blocks that have uncommon geometry, this assumption may
+# fail. To still assign these blocks to a ZCTA, we can run an st_nearest feature
+# to allocate their population. We want to avoid this allocation for nature 
+# perserves or other areas that may have very small population but be far from 
+# a ZCTA
+#
+if (length(populated) > 0) {
+  
+  # Output to log this process
+  #
+  cat("Warning: Joining ", length(populated), " blocks by nearest feature join \n")
+  
+  # Extract unassigned and populated blocks
+  #
+  unassigned_pop <- unassigned_blocks[populated, ]
+  
+  # Perform st_nearest to join each unassigned and populated block to the nearest
+  # ZCTA
+  #
+  unassigned_join <- st_join(unassigned_pop, zctas[c(zcta_geoid)], join = st_nearest_feature)
+  
+  # Initialize distance column. We will calculate how far each block is from its
+  # matched ZCTA. If the distance is greater than 1km it will not be joined
+  # to any ZCTA
+  #
+  unassigned_join$dist_zcta <- NA
+  
+  for (i in 1:length(unassigned_join$GEOID10)) {
+    
+    st_distance(unassigned_join[i,], zctas[zctas[[zcta_geoid]] == unassigned_join[i,][[zcta_geoid]],])
+    
+    # For each joined block, check distance to the joined zcta
+    #
+    unassigned_join[i, ]$dist_zcta <- st_distance(unassigned_join[i,], zctas[zctas[[zcta_geoid]] == unassigned_join[i,][[zcta_geoid]], ])
+    
+    # If the distance is greater than 1000m, remove the accompanying ZCTA
+    #
+    unassigned_join[i, ][[zcta_geoid]] <- ifelse(unassigned_join[i, ]$dist_zcta >= 1000, NA, unassigned_join[i, ][[zcta_geoid]])
+    
+  }
+  
+  # Output to log this process
+  #
+  cat("Joined ", length(which(!is.na(unassigned_join[[zcta_geoid]]))), " blocks by nearest feature join \n")
+  
+  # Initialize distance column for joined blocks
+  #
+  block_zctas$dist_zcta <- 0
+  
+  # Join together blocks
+  #
+  block_zctas <- rbind(block_zctas, unassigned_join)
+  
+}
+
+# Remove the extraneous columns; we only need block GEOID, ZCTA GEOID, and population (if available)
+# n.b., some census block shapefiles include populations but not others. The code
+# here assumes that the shapefile does not include population. The name of the GEOID
+# will change depending on the census year; confirm that block_geoid correctly
+# identifies it. Modify as needed. Both the blocks and ZCTA shapefiles may have
+# variables called GEOID; the block one will come first if intersection is done
+# with block first.
+#
+block_zctas <- block_zctas[,c(block_geoid, zcta_geoid, block_pop_var)]
+
+#
 # %%%%%%%%%%%% STEP 4. CREATE SPATIAL WEIGHTS FOR FINAL CROSSWALK %%%%%%%%%%%% #
 #
 # Get the total population of ZCTAs based on the blocks that are within each ZCTA
+# NOTE: Where there are ZCTAs that include populated blocks in multiple states, 
+# only the population within the state will be summed here. In the next script
+# we will resolve any split ZCTA population across states by weighting on the 
+# full interstate population
 #
 # Convert block_zctas sf object to data frame
 #
