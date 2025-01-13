@@ -159,7 +159,7 @@ blockpop[,c("NAME", "variable")] <- NULL
 # Get the GEOID for the block shapefile and for the block populations file, which may 
 # change depending on the year of Census data
 #
-GEOID_shapefile <- names(blocks)[grep("^GEOID|BLKIDFP", names(blocks), ignore.case = TRUE)]
+GEOID_shapefile <- names(blocks)[grep("^GEOID|BLKIDFP", names(blocks), ignore.case = TRUE)][1]
 GEOID_popfile <- names(blockpop)[grep("^GEOID", names(blockpop), ignore.case = TRUE)]
 
 # Merge the population data with the blocks_zcta shapefile
@@ -176,7 +176,7 @@ if (num_missing > 0) {
 #
 # Extract relevant column names
 #
-block_geoid <- names(blocks)[grep("^GEOID|^BLKID", names(blocks))]
+block_geoid <- names(blocks)[grep("^GEOID|^BLKID", names(blocks))][1]
 block_pop_var <- names(blocks)[grep("^POP|^Pop", names(blocks))]
 land_area_var <- names(blocks)[grep("^ALAND", names(blocks))]
 zcta_geoid <- names(zctas)[grep("^ZCTA5", names(zctas))]
