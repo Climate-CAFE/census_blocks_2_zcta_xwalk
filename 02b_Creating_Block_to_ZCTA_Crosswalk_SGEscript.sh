@@ -14,4 +14,4 @@ Rscript 02a_Creating_Block_to_ZCTA_Crosswalk.R $SGE_TASK_ID
 ##
 ## Then, submit the job as an array *for each state* with this command in Terminal:
 ##
-## qsub -P projectName -t 1-51 02b_Creating_Block_to_ZCTA_Crosswalk_BSGEscript.sh
+## qsub -P projectName -t 1-51 02b_Creating_Block_to_ZCTA_Crosswalk_SGEscript.sh
